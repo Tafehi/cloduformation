@@ -1,0 +1,95 @@
+Parameters:
+  KeyName:
+    Description: The EC2 Key Pair to allow SSH access to the instances
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  Subnet:
+    Description: >-
+      Select existing subnets. The number selected must match the number of
+      subnets above. Subnets selected must be in separate AZs.
+    Type: 'List<AWS::EC2::Subnet::Id>'
+Mappings:
+  RegionMap:
+    eu-central-1:
+      AMI: ami-00a205cb8e06c3c4e
+    eu-west-1:
+      AMI: ami-0bb3fad3c0286ebd5
+    eu-west-2:
+      AMI: ami-0a669382ea0feb73a
+    eu-west-3:
+      AMI: ami-0de12f76efe134f2f
+Resources:
+  myEC2Instance:
+    Type: 'AWS::EC2::LaunchTemplate'
+    Properties:
+      ImageId:
+        'Fn::FindInMap':
+          - RegionMap
+          - Ref: 'AWS::Region'
+          - AMI
+        KeyName: !Ref KeyName
+        SubnetId: !Ref Subnet
+        InstanceType: t2.micro
+        SecurityGroups:
+          - !Ref InstanceSecurityGroup
+  ElasticLoadBalancer:
+    Type: 'AWS::ElasticLoadBalancing::LoadBalancer'
+    Properties:
+      Listeners:
+        - LoadBalancerPort: '80'
+          InstancePort: '80'
+          Protocol: HTTP
+      HealthCheck:
+        Target: 'HTTP:80/'
+        HealthyThreshold: '3'
+        UnhealthyThreshold: '5'
+        Interval: '30'
+        Timeout: '5'
+  myASG:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    Properties:
+      AutoScalingGroupName: myASG
+      MinSize: '1'
+      MaxSize: '6'
+      DesiredCapacity: '2'
+      LaunchTemplate:
+        LaunchTemplateId: !Ref myEC2Instance
+      HealthCheckGracePeriod: 300
+      HealthCheckType: ELB
+      MaxInstanceLifetime: 2592000
+      Cooldown: '60'
+      ScalingAdjustment: '-1'
+      LoadBalancerNames:
+        - Ref: ElasticLoadBalancer
+  ASGScalingPolicyHigh:
+    Type: 'AWS::AutoScaling::ScalingPolicy'
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName:
+        Ref: myASG
+      PolicyType: StepScaling
+      MetricAggregationType: Average
+      EstimatedInstanceWarmup: 60
+      StepAdjustments:
+        - MetricIntervalLowerBound: 0
+          MetricIntervalUpperBound: 15
+          ScalingAdjustment: 1
+        - MetricIntervalLowerBound: 15
+          MetricIntervalUpperBound: 25
+          ScalingAdjustment: 2
+        - MetricIntervalLowerBound: 25
+          ScalingAdjustment: 3
+  InstanceSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable SSH access and HTTP
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+          SourceSecurityGroupOwnerId: !Ref ElasticLoadBalancer
